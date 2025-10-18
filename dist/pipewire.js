@@ -143,6 +143,9 @@ const shellQuote = (value) => {
     return `'${value.replace(/'/g, "'\\''")}'`;
 };
 const loadRtpSessionModule = async (config, logger, sanitizedName) => {
+    if (!config.sdpFilePath) {
+        throw new Error("SDP file path is required for receiver mode");
+    }
     const spaProps = {
         "sess.mode": "receiver",
         "sess.name": config.sessionName,
@@ -197,6 +200,9 @@ const createLink = async (outputPortId, inputPortId) => {
     return Number.parseInt(match[1], 10);
 };
 export const setupPipewireRouting = async (config, logger) => {
+    if (!config.soundCardName) {
+        throw new Error("Sound card name is required for receiver mode");
+    }
     const sanitizedName = `aes67-${sanitizeNodeName(config.sessionName)}`;
     const moduleId = await loadRtpSessionModule(config, logger, sanitizedName);
     const sessionNode = await waitForSessionNode(logger, sanitizedName, config.sessionName);

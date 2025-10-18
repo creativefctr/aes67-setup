@@ -7,6 +7,10 @@ export class Logger {
     this.verbose = verbose;
   }
 
+  isVerbose(): boolean {
+    return this.verbose;
+  }
+
   info(message: string): void {
     console.log(chalk.cyan(`[INFO] ${message}`));
   }

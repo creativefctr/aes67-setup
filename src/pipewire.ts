@@ -226,6 +226,10 @@ const loadRtpSessionModule = async (
   logger: Logger,
   sanitizedName: string,
 ): Promise<number> => {
+  if (!config.sdpFilePath) {
+    throw new Error("SDP file path is required for receiver mode");
+  }
+
   const spaProps = {
     "sess.mode": "receiver",
     "sess.name": config.sessionName,
@@ -298,6 +302,10 @@ export const setupPipewireRouting = async (
   config: Aes67DeviceConfig,
   logger: Logger,
 ): Promise<PipewireRoutingState> => {
+  if (!config.soundCardName) {
+    throw new Error("Sound card name is required for receiver mode");
+  }
+
   const sanitizedName = `aes67-${sanitizeNodeName(config.sessionName)}`;
   const moduleId = await loadRtpSessionModule(config, logger, sanitizedName);
 

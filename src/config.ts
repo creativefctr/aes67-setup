@@ -10,19 +10,24 @@ const multicastRegex =
 
 const configSchema = z
   .object({
-    soundCardId: z.string().min(1),
-    soundCardName: z.string().min(1),
+    deviceMode: z.enum(["sender", "receiver"]),
+    soundCardId: z.string().min(1).optional(),
+    soundCardName: z.string().min(1).optional(),
     channelCount: z.number().int().positive(),
     channelNames: z.array(z.string().min(1)).nonempty(),
     samplingRate: z.number().int().positive(),
     multicastAddress: z.string().regex(multicastRegex, "Invalid multicast IPv4 address"),
-    sdpFilePath: z.string().min(1),
+    sdpFilePath: z.string().min(1).optional(),
     networkInterface: z.string().min(1),
     ptpDomain: z.number().int().min(0).max(127),
     ptpMode: z.enum(["grandmaster", "slave"]),
     rtpDestinationPort: z.number().int().min(1024).max(65535),
     sessionName: z.string().min(1),
     lastUpdated: z.string(),
+    // Sender-specific fields
+    jackClientName: z.string().min(1).optional(),
+    channelsPerReceiver: z.number().int().positive().optional(),
+    baseMulticastAddress: z.string().regex(multicastRegex, "Invalid multicast IPv4 address").optional(),
   })
   .superRefine((data, ctx) => {
     if (data.channelNames.length !== data.channelCount) {
@@ -31,6 +36,56 @@ const configSchema = z
         message: `channelNames length (${data.channelNames.length}) must match channelCount (${data.channelCount})`,
         path: ["channelNames"],
       });
+    }
+    
+    // Receiver mode validation
+    if (data.deviceMode === "receiver") {
+      if (!data.soundCardId) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: "soundCardId is required for receiver mode",
+          path: ["soundCardId"],
+        });
+      }
+      if (!data.soundCardName) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: "soundCardName is required for receiver mode",
+          path: ["soundCardName"],
+        });
+      }
+      if (!data.sdpFilePath) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: "sdpFilePath is required for receiver mode",
+          path: ["sdpFilePath"],
+        });
+      }
+    }
+    
+    // Sender mode validation
+    if (data.deviceMode === "sender") {
+      if (!data.jackClientName) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: "jackClientName is required for sender mode",
+          path: ["jackClientName"],
+        });
+      }
+      if (!data.channelsPerReceiver) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: "channelsPerReceiver is required for sender mode",
+          path: ["channelsPerReceiver"],
+        });
+      }
+      if (!data.baseMulticastAddress) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: "baseMulticastAddress is required for sender mode",
+          path: ["baseMulticastAddress"],
+        });
+      }
     }
   });
 

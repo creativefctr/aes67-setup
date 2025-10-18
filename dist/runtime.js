@@ -1,7 +1,9 @@
 import chalk from "chalk";
+import path from "path";
 import { execCommandSafe } from "./utils/exec.js";
 import { spawnLongRunning } from "./pipes.js";
 import { setupPipewireRouting, teardownPipewireRouting } from "./pipewire.js";
+import { startGstreamerStreams, stopGstreamerStreams, generateSdpFiles } from "./gstreamer.js";
 export const ensurePipewireRunning = async (logger) => {
     try {
         await execCommandSafe("systemctl --user is-active --quiet pipewire.service");
@@ -37,15 +39,15 @@ const startPtpDaemon = (config, logger) => {
     }
     return spawnLongRunning("ptp4l", baseArgs, {}, logger, "ptp4l daemon");
 };
-export const runRuntimeLoop = async (config, logger) => {
-    logger.info("Starting AES67 runtime process.");
+const runReceiverRuntimeLoop = async (config, logger) => {
+    logger.info("Starting AES67 receiver runtime process.");
     await ensurePipewireRunning(logger);
     let routingState;
     let ptpHandle;
     let clockSyncHandle;
     let stopRequested = false;
     const handleSignal = (signal) => {
-        logger.warn(`Received ${signal}. Initiating shutdown of AES67 runtime.`);
+        logger.warn(`Received ${signal}. Initiating shutdown of AES67 receiver runtime.`);
         stopRequested = true;
     };
     const signals = ["SIGINT", "SIGTERM"];
@@ -54,7 +56,7 @@ export const runRuntimeLoop = async (config, logger) => {
         routingState = await configureMultichannelRouting(config, logger);
         ptpHandle = startPtpDaemon(config, logger);
         clockSyncHandle = startClockSync(config, logger);
-        console.log(chalk.green("AES67 setup is active. Monitoring..."));
+        console.log(chalk.green("AES67 receiver is active. Monitoring..."));
         // eslint-disable-next-line no-unmodified-loop-condition
         while (!stopRequested) {
             // eslint-disable-next-line no-await-in-loop
@@ -71,5 +73,54 @@ export const runRuntimeLoop = async (config, logger) => {
             await ptpHandle.stop();
         }
         await teardownPipewireRouting(routingState, logger);
+    }
+};
+const runSenderRuntimeLoop = async (config, logger, configPath) => {
+    logger.info("Starting AES67 sender runtime process.");
+    let gstreamerStreams;
+    let stopRequested = false;
+    const handleSignal = (signal) => {
+        logger.warn(`Received ${signal}. Initiating shutdown of AES67 sender runtime.`);
+        stopRequested = true;
+    };
+    const signals = ["SIGINT", "SIGTERM"];
+    signals.forEach((signal) => process.on(signal, handleSignal));
+    try {
+        // Start Gstreamer streams with PTP synchronization
+        gstreamerStreams = await startGstreamerStreams(config, logger, configPath);
+        // Generate SDP files for receivers
+        const sdpOutputDir = path.join(process.cwd(), "sdp-files");
+        const sdpFiles = await generateSdpFiles(config, gstreamerStreams, sdpOutputDir, logger);
+        console.log(chalk.green("AES67 sender is active. Monitoring..."));
+        logger.info("Manual Jack connections required:");
+        logger.info(`  Connect your audio source ports to the Jack clients named: ${config.jackClientName}_stream*`);
+        logger.info("  Use jack_connect or a Jack patchbay tool like QjackCtl");
+        logger.info("");
+        logger.info("SDP files for receivers generated:");
+        sdpFiles.forEach((file, index) => {
+            logger.info(`  Stream ${index + 1}: ${file}`);
+        });
+        logger.info("Copy these SDP files to your receiver(s) for configuration.");
+        // eslint-disable-next-line no-unmodified-loop-condition
+        while (!stopRequested) {
+            // eslint-disable-next-line no-await-in-loop
+            await new Promise((resolve) => setTimeout(resolve, 60_000));
+        }
+        logger.info("Shutdown requested, cleaning up resources.");
+    }
+    finally {
+        signals.forEach((signal) => process.off(signal, handleSignal));
+        await stopGstreamerStreams(gstreamerStreams, logger);
+    }
+};
+export const runRuntimeLoop = async (config, logger, configPath) => {
+    if (config.deviceMode === "receiver") {
+        await runReceiverRuntimeLoop(config, logger);
+    }
+    else if (config.deviceMode === "sender") {
+        await runSenderRuntimeLoop(config, logger, configPath);
+    }
+    else {
+        throw new Error(`Unknown device mode: ${config.deviceMode}`);
     }
 };

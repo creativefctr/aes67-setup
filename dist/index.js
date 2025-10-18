@@ -40,11 +40,38 @@ const createProgram = () => {
             logger.warn("No configuration found. Starting initial setup.");
             config = await handleInitialSetup(configPath, logger);
         }
-        await runRuntimeLoop(config, logger);
+        await runRuntimeLoop(config, logger, configPath);
     });
     return program;
 };
 const handleInitialSetup = async (configPath, logger) => {
+    // First, ask for device mode
+    const { deviceMode } = await inquirer.prompt([
+        {
+            type: "list",
+            name: "deviceMode",
+            message: "Is this device being configured as a sender or receiver?",
+            choices: [
+                {
+                    name: "Receiver (receive and play AES67 streams)",
+                    value: "receiver",
+                },
+                {
+                    name: "Sender (send audio via AES67 using Gstreamer - Windows only)",
+                    value: "sender",
+                },
+            ],
+            default: "receiver",
+        },
+    ]);
+    if (deviceMode === "receiver") {
+        return handleReceiverSetup(configPath, logger);
+    }
+    else {
+        return handleSenderSetup(configPath, logger);
+    }
+};
+const handleReceiverSetup = async (configPath, logger) => {
     const soundCard = await promptForSoundCard();
     logger.verboseLog(`Selected sound card ${soundCard.name} (${soundCard.id})`);
     // First, get the channel count
@@ -161,6 +188,7 @@ const handleInitialSetup = async (configPath, logger) => {
         },
     ]);
     const config = {
+        deviceMode: "receiver",
         soundCardId: soundCard.id,
         soundCardName: soundCard.name,
         channelCount,
@@ -177,6 +205,134 @@ const handleInitialSetup = async (configPath, logger) => {
     };
     await saveConfig(configPath, config);
     logger.info(`Configuration saved to ${configPath}`);
+    return config;
+};
+const handleSenderSetup = async (configPath, logger) => {
+    logger.info("Configuring device as AES67 sender (Windows with JackAudio + Gstreamer)");
+    // Get sender-specific configuration
+    const senderAnswers = await inquirer.prompt([
+        {
+            type: "number",
+            name: "channelCount",
+            message: "Total number of channels to send:",
+            default: 16,
+            validate: (input) => (input > 0 ? true : "Channel count must be greater than 0"),
+        },
+        {
+            type: "number",
+            name: "channelsPerReceiver",
+            message: "Channels per receiver (determines number of streams):",
+            default: 8,
+            validate: (input, answers) => {
+                if (input <= 0)
+                    return "Channels per receiver must be greater than 0";
+                const totalChannels = answers?.channelCount ?? 0;
+                if (totalChannels > 0 && input > totalChannels) {
+                    return `Channels per receiver cannot exceed total channels (${totalChannels})`;
+                }
+                return true;
+            },
+        },
+        {
+            type: "input",
+            name: "jackClientName",
+            message: "Jack client name (the client providing audio channels):",
+            default: "AudioSource",
+            validate: (input) => (input.trim().length > 0 ? true : "Jack client name cannot be empty"),
+        },
+    ]);
+    const numStreams = Math.ceil(senderAnswers.channelCount / senderAnswers.channelsPerReceiver);
+    logger.info(`Configuration will create ${numStreams} stream(s) with ${senderAnswers.channelsPerReceiver} channels each`);
+    // Generate channel names
+    const channelNames = [];
+    for (let i = 1; i <= senderAnswers.channelCount; i++) {
+        channelNames.push(`Channel ${i}`);
+    }
+    // Get common configuration
+    const commonAnswers = await inquirer.prompt([
+        {
+            type: "number",
+            name: "samplingRate",
+            message: "Sampling rate (Hz):",
+            default: 48000,
+            validate: (input) => (input > 0 ? true : "Sampling rate must be positive"),
+        },
+        {
+            type: "input",
+            name: "baseMulticastAddress",
+            message: "Base multicast address (will increment for each stream):",
+            default: "239.69.100.1",
+            validate: (input) => /^((22[4-9])|(23[0-9]))\.((25[0-5])|([01]?\d?\d))\.((25[0-5])|([01]?\d?\d))\.((25[0-5])|([01]?\d?\d))$/.test(input)
+                ? true
+                : "Enter a valid multicast IPv4 address",
+        },
+        {
+            type: "input",
+            name: "networkInterface",
+            message: "Network interface name for AES67 traffic (e.g., Ethernet, Wi-Fi):",
+            default: "Ethernet",
+            validate: (input) => (input.trim().length > 0 ? true : "Interface name cannot be empty"),
+        },
+        {
+            type: "number",
+            name: "ptpDomain",
+            message: "PTP domain number:",
+            default: 0,
+            validate: (input) => (input >= 0 && input <= 127 ? true : "PTP domain must be between 0 and 127"),
+        },
+        {
+            type: "list",
+            name: "ptpMode",
+            message: "PTP mode - Windows sender must sync to a Raspberry Pi grandmaster:",
+            choices: [
+                {
+                    name: "Slave (sync to Raspberry Pi grandmaster) - Required for Windows",
+                    value: "slave",
+                },
+            ],
+            default: "slave",
+        },
+        {
+            type: "number",
+            name: "rtpDestinationPort",
+            message: "Base RTP destination port (will increment for each stream):",
+            default: 5004,
+            validate: (input) => (input >= 1024 && input <= 65535 ? true : "Port must be between 1024 and 65535"),
+        },
+        {
+            type: "input",
+            name: "sessionName",
+            message: "Session name for logging/identification:",
+            default: "AES67 Sender",
+            validate: (input) => (input.trim().length > 0 ? true : "Session name cannot be empty"),
+        },
+    ]);
+    const config = {
+        deviceMode: "sender",
+        channelCount: senderAnswers.channelCount,
+        channelNames,
+        channelsPerReceiver: senderAnswers.channelsPerReceiver,
+        jackClientName: senderAnswers.jackClientName,
+        samplingRate: commonAnswers.samplingRate,
+        multicastAddress: commonAnswers.baseMulticastAddress,
+        baseMulticastAddress: commonAnswers.baseMulticastAddress,
+        networkInterface: commonAnswers.networkInterface,
+        ptpDomain: commonAnswers.ptpDomain,
+        ptpMode: commonAnswers.ptpMode,
+        rtpDestinationPort: commonAnswers.rtpDestinationPort,
+        sessionName: commonAnswers.sessionName,
+        lastUpdated: new Date().toISOString(),
+    };
+    await saveConfig(configPath, config);
+    logger.info(`Configuration saved to ${configPath}`);
+    logger.info(`Sender will create ${numStreams} stream(s):`);
+    for (let i = 0; i < numStreams; i++) {
+        const streamChannelCount = Math.min(senderAnswers.channelsPerReceiver, senderAnswers.channelCount - i * senderAnswers.channelsPerReceiver);
+        const baseAddress = commonAnswers.baseMulticastAddress.split(".");
+        baseAddress[3] = String(parseInt(baseAddress[3], 10) + i);
+        const streamAddress = baseAddress.join(".");
+        logger.info(`  Stream ${i + 1}: ${streamChannelCount} channels @ ${streamAddress}:${commonAnswers.rtpDestinationPort + i}`);
+    }
     return config;
 };
 const program = createProgram();

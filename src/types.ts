@@ -1,17 +1,22 @@
 export interface Aes67DeviceConfig {
-  soundCardId: string;
-  soundCardName: string;
+  deviceMode: "sender" | "receiver";
+  soundCardId?: string;
+  soundCardName?: string;
   channelCount: number;
   channelNames: string[];
   samplingRate: number;
   multicastAddress: string;
-  sdpFilePath: string;
+  sdpFilePath?: string;
   networkInterface: string;
   ptpDomain: number;
   ptpMode: "grandmaster" | "slave";
   rtpDestinationPort: number;
   sessionName: string;
   lastUpdated: string;
+  // Sender-specific fields
+  jackClientName?: string;
+  channelsPerReceiver?: number;
+  baseMulticastAddress?: string;
 }
 
 export interface RuntimeOptions {

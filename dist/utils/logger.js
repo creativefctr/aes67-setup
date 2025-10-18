@@ -4,6 +4,9 @@ export class Logger {
     constructor(verbose) {
         this.verbose = verbose;
     }
+    isVerbose() {
+        return this.verbose;
+    }
     info(message) {
         console.log(chalk.cyan(`[INFO] ${message}`));
     }
