@@ -80,6 +80,7 @@ const handleInitialSetup = async (configPath: string, logger: Logger): Promise<A
     sdpFilePath: string;
     networkInterface: string;
     ptpDomain: number;
+    ptpMode: "grandmaster" | "slave";
     rtpDestinationPort: number;
     sessionName: string;
   }>([
@@ -155,6 +156,22 @@ const handleInitialSetup = async (configPath: string, logger: Logger): Promise<A
       validate: (input: number) => (input >= 0 && input <= 127 ? true : "PTP domain must be between 0 and 127"),
     },
     {
+      type: "list",
+      name: "ptpMode",
+      message: "PTP mode - Select the role for this Raspberry Pi:",
+      choices: [
+        {
+          name: "Slave (sync to external PTP grandmaster)",
+          value: "slave",
+        },
+        {
+          name: "Grandmaster (act as the PTP clock master for other devices)",
+          value: "grandmaster",
+        },
+      ],
+      default: "slave",
+    },
+    {
       type: "number",
       name: "rtpDestinationPort",
       message: "RTP destination port:",
@@ -180,6 +197,7 @@ const handleInitialSetup = async (configPath: string, logger: Logger): Promise<A
     sdpFilePath: answers.sdpFilePath,
     networkInterface: answers.networkInterface,
     ptpDomain: answers.ptpDomain,
+    ptpMode: answers.ptpMode,
     rtpDestinationPort: answers.rtpDestinationPort,
     sessionName: answers.sessionName,
     lastUpdated: new Date().toISOString(),

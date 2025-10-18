@@ -30,8 +30,21 @@ export const configureMultichannelRouting = async (
 };
 
 const startPtpDaemon = (config: Aes67DeviceConfig, logger: Logger): ManagedProcessHandle => {
-  const args = ["-i", config.networkInterface, "-m", "-2", "-s", "-l", "7", "-f", "/etc/linuxptp/ptp4l.conf", "-d", `${config.ptpDomain}`];
-  return spawnLongRunning("ptp4l", args, {}, logger, "ptp4l daemon");
+  const baseArgs = ["-i", config.networkInterface, "-m", "-2"];
+  
+  // Add mode-specific arguments
+  if (config.ptpMode === "grandmaster") {
+    logger.info(`Starting PTP daemon in GRANDMASTER mode on ${config.networkInterface}.`);
+    // -p: Set priority1 to 128 (default grandmaster priority)
+    // -d: PTP domain
+    baseArgs.push("-l", "7", "-f", "/etc/linuxptp/ptp4l.conf", "-d", `${config.ptpDomain}`);
+  } else {
+    logger.info(`Starting PTP daemon in SLAVE mode on ${config.networkInterface}.`);
+    // -s: Slave-only mode
+    baseArgs.push("-s", "-l", "7", "-f", "/etc/linuxptp/ptp4l.conf", "-d", `${config.ptpDomain}`);
+  }
+  
+  return spawnLongRunning("ptp4l", baseArgs, {}, logger, "ptp4l daemon");
 };
 
 export const runRuntimeLoop = async (config: Aes67DeviceConfig, logger: Logger): Promise<void> => {

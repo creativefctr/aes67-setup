@@ -8,6 +8,7 @@ export interface Aes67DeviceConfig {
   sdpFilePath: string;
   networkInterface: string;
   ptpDomain: number;
+  ptpMode: "grandmaster" | "slave";
   rtpDestinationPort: number;
   sessionName: string;
   lastUpdated: string;

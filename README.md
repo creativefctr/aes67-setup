@@ -8,6 +8,7 @@
 - Validates inputs including multicast address, channel names/count, network interface, and SDP file existence.
 - Generates a JSON configuration stored adjacent to the runtime folder.
 - Long-running runtime mode that prepares PipeWire, spawns PTP daemon (`ptp4l`) and clock sync (`phc2sys`), and monitors output.
+- **PTP mode selection**: Configure a Raspberry Pi as either a **grandmaster clock** (to provide timing for other devices) or a **slave** (to sync to an external grandmaster).
 - Verbose logging option to aid troubleshooting during deployment.
 
 ## Requirements
@@ -28,6 +29,53 @@ To test in development without compiling:
 ```bash
 npm run dev -- --help
 ```
+
+## PTP Clock Topology: Grandmaster and Slave Modes
+
+AES67 requires precise time synchronization between all devices using PTP (Precision Time Protocol). This tool now supports two PTP modes to accommodate different network topologies:
+
+### Grandmaster Mode
+
+Configure a Raspberry Pi as a **PTP grandmaster clock** when you want it to be the master timing source for your AES67 network. This is useful when:
+
+- You have multiple Raspberry Pi receivers and want one Pi to provide clock synchronization for all others
+- You want to avoid relying on external timing equipment
+- You're building a standalone AES67 system without a dedicated PTP grandmaster
+
+**Example Topology:**
+```
+Raspberry Pi #1 (Grandmaster) ──┐
+                                 ├──→ Network Switch ──→ Audio Sender (syncs to Pi #1)
+Raspberry Pi #2 (Slave) ────────┤
+Raspberry Pi #3 (Slave) ────────┘
+```
+
+In this setup:
+- **Raspberry Pi #1** runs in grandmaster mode and provides the timing reference
+- **Raspberry Pi #2 and #3** run in slave mode and sync their clocks to Pi #1
+- **Audio sender** (e.g., Dante Virtual Soundcard) is configured to sync to the Pi #1 grandmaster
+
+### Slave Mode
+
+Configure a Raspberry Pi as a **PTP slave** when it should synchronize to an external timing source. This is the default and most common mode. Use slave mode when:
+
+- Syncing to a professional PTP grandmaster clock
+- Syncing to an audio sender that acts as grandmaster (e.g., Dante Virtual Soundcard in default mode)
+- Syncing to another Raspberry Pi running in grandmaster mode
+
+**Example Topology:**
+```
+Professional Audio Sender (Dante, Ravenna, etc.) ──→ Network Switch ──┬──→ Raspberry Pi #1 (Slave)
+                                                                       ├──→ Raspberry Pi #2 (Slave)
+                                                                       └──→ Raspberry Pi #3 (Slave)
+```
+
+### Configuration Notes
+
+- All devices must be on the same **PTP domain** (typically domain `0`)
+- All devices must be on the same network segment (same subnet, no routing)
+- Only **one device** should be configured as grandmaster in a given PTP domain
+- When using a Raspberry Pi as grandmaster, ensure it has a stable network connection (wired, not Wi-Fi)
 
 ## Complete Setup Guide: Sender and Receiver
 
@@ -183,6 +231,7 @@ Dante Virtual Soundcard typically acts as a PTP clock master by default.
    | SDP file path | `/etc/aes67/dante-output.sdp` | Path where you copied the SDP file |
    | Network interface | `eth0` | Your wired Ethernet interface (check with `ip link`) |
    | PTP domain | `0` | Must match Dante's PTP domain |
+   | PTP mode | `Slave` | Choose **Slave** to sync to Dante sender, or **Grandmaster** if this Pi provides timing |
    | RTP destination port | `5004` | Must match the port from Dante Controller |
    | Session name | `Dante Main Output` | Any friendly name for logging |
 
@@ -332,11 +381,12 @@ You will be prompted to:
 - Provide channel count and names.
   - *Note:* Enter the number of discrete outputs you plan to use (e.g., 8 for 7.1) and name them in playback order, such as `Left, Right, Center, LFE, Left Surround, Right Surround`.
 - Specify sampling rate, multicast address, SDP file, network interface, PTP domain, RTP destination port, and session name.
-  - *Sampling rate:* Use the stream’s sample rate (commonly `48000`). All devices on the network must match.
-  - *Multicast address:* Enter the AES67 sender’s multicast IPv4 address (typically `239.x.x.x`). Confirm with the audio network administrator.
-  - *SDP file:* Provide the path where the sender’s `.sdp` description is stored (e.g., `/etc/aes67/program.sdp`). The file must remain accessible.
+  - *Sampling rate:* Use the stream's sample rate (commonly `48000`). All devices on the network must match.
+  - *Multicast address:* Enter the AES67 sender's multicast IPv4 address (typically `239.x.x.x`). Confirm with the audio network administrator.
+  - *SDP file:* Provide the path where the sender's `.sdp` description is stored (e.g., `/etc/aes67/program.sdp`). The file must remain accessible.
   - *Network interface:* Specify the wired network interface that carries AES67 traffic (for example `eth0`). Avoid Wi-Fi interfaces.
   - *PTP domain:* Match the PTP domain used by the AES67 clock master (often `0`; consult your broadcaster/audio-over-IP setup).
+  - *PTP mode:* Select **Slave** (default) to sync to an external PTP clock, or **Grandmaster** to make this Raspberry Pi the timing master for other devices on the network.
   - *RTP destination port:* Use the UDP port announced by the sender (commonly `5004`). Ensure firewall rules allow this port.
   - *Session name:* Friendly label for logs and PipeWire nodes (e.g., `Main Program Feed`).
 
@@ -388,6 +438,7 @@ The generated JSON includes:
 - `sdpFilePath`
 - `networkInterface`
 - `ptpDomain`
+- `ptpMode` - Either `"grandmaster"` or `"slave"`
 - `rtpDestinationPort`
 - `sessionName`
 - `lastUpdated`
