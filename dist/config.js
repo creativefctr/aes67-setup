@@ -20,9 +20,13 @@ const configSchema = z
     sessionName: z.string().min(1),
     lastUpdated: z.string(),
     // Sender-specific fields
+    audioSource: z.enum(["jack", "asio"]).optional(),
     jackClientName: z.string().min(1).optional(),
     channelsPerReceiver: z.number().int().positive().optional(),
     baseMulticastAddress: z.string().regex(multicastRegex, "Invalid multicast IPv4 address").optional(),
+    asioDeviceClsid: z.string().min(1).optional(),
+    asioInputChannels: z.string().optional(),
+    gstreamerDebugLevel: z.number().int().min(0).max(5).optional(),
 })
     .superRefine((data, ctx) => {
     if (data.channelNames.length !== data.channelCount) {
@@ -58,11 +62,26 @@ const configSchema = z
     }
     // Sender mode validation
     if (data.deviceMode === "sender") {
-        if (!data.jackClientName) {
+        if (!data.audioSource) {
             ctx.addIssue({
                 code: z.ZodIssueCode.custom,
-                message: "jackClientName is required for sender mode",
+                message: "audioSource is required for sender mode",
+                path: ["audioSource"],
+            });
+        }
+        // Validate audio source-specific fields
+        if (data.audioSource === "jack" && !data.jackClientName) {
+            ctx.addIssue({
+                code: z.ZodIssueCode.custom,
+                message: "jackClientName is required when audioSource is 'jack'",
                 path: ["jackClientName"],
+            });
+        }
+        if (data.audioSource === "asio" && !data.asioDeviceClsid) {
+            ctx.addIssue({
+                code: z.ZodIssueCode.custom,
+                message: "asioDeviceClsid is required when audioSource is 'asio'",
+                path: ["asioDeviceClsid"],
             });
         }
         if (!data.channelsPerReceiver) {

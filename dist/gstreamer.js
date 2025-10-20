@@ -3,6 +3,41 @@ import { execCommandSafe } from "./utils/exec.js";
 import fs from "fs-extra";
 import path from "path";
 /**
+ * Format GStreamer command arguments for Windows terminal (PowerShell)
+ * Uses single quotes for caps filters and escapes parentheses for PowerShell
+ */
+const formatCommandForWindows = (command, args) => {
+    const escapeForWindows = (arg) => {
+        // Escape parentheses for PowerShell (backtick is PowerShell escape character)
+        if (arg === "(") {
+            return "`(";
+        }
+        if (arg === ")") {
+            return "`)";
+        }
+        // Don't quote simple operators and element names
+        if (arg === "!" || /^[a-z0-9]+$/.test(arg)) {
+            return arg;
+        }
+        // Caps filters (audio/x-raw) - use single quotes to preserve parentheses in bitmask
+        if (arg.startsWith("audio/")) {
+            return `'${arg}'`;
+        }
+        // Properties with values (key=value) - use double quotes if contains special chars
+        if (arg.includes("=")) {
+            // Check if value part has spaces or quotes that need escaping
+            if (arg.includes(" ") || arg.includes("&") || arg.includes("|")) {
+                return `"${arg.replace(/"/g, '\\"')}"`;
+            }
+            return arg;
+        }
+        // Default: return as-is for simple args
+        return arg;
+    };
+    const formattedArgs = args.map(escapeForWindows);
+    return `${command} ${formattedArgs.join(" ")}`;
+};
+/**
  * Calculate stream configurations based on total channels and channels per receiver
  */
 export const calculateStreamConfig = (config) => {
@@ -24,7 +59,7 @@ export const calculateStreamConfig = (config) => {
             multicastAddress,
             port: config.rtpDestinationPort + i,
             channelCount,
-            startChannel: startChannel + 1, // 1-indexed for Jack
+            startChannel: startChannel + 1, // 1-indexed
             endChannel,
         });
     }
@@ -33,7 +68,7 @@ export const calculateStreamConfig = (config) => {
 /**
  * Verify that Gstreamer is installed and has required plugins
  */
-export const verifyGstreamerInstallation = async (logger) => {
+export const verifyGstreamerInstallation = async (logger, audioSource = "asio") => {
     try {
         await execCommandSafe("gst-launch-1.0 --version");
         logger.verboseLog("Gstreamer found");
@@ -41,8 +76,14 @@ export const verifyGstreamerInstallation = async (logger) => {
     catch (error) {
         throw new Error("Gstreamer not found. Please install Gstreamer from https://gstreamer.freedesktop.org/download/");
     }
-    // Check for required plugins
-    const requiredPlugins = ["jack", "audioconvert", "audioresample", "rtpL24pay", "udpsink"];
+    // Check for required plugins based on audio source
+    const requiredPlugins = ["audioconvert", "audioresample", "rtpL24pay", "udpsink", "clockselect", "queue"];
+    if (audioSource === "asio") {
+        requiredPlugins.push("asio");
+    }
+    else if (audioSource === "jack") {
+        requiredPlugins.push("jack");
+    }
     for (const plugin of requiredPlugins) {
         try {
             // eslint-disable-next-line no-await-in-loop
@@ -50,139 +91,152 @@ export const verifyGstreamerInstallation = async (logger) => {
             logger.verboseLog(`Gstreamer plugin '${plugin}' found`);
         }
         catch (error) {
-            throw new Error(`Required Gstreamer plugin '${plugin}' not found. Please install gstreamer1.0-plugins-good and gstreamer1.0-plugins-bad`);
+            throw new Error(`Required Gstreamer plugin '${plugin}' not found. Please install GStreamer 1.24+ with all plugin packages (base, good, bad).\n` +
+                `The 'clockselect' and 'ptp' plugins are required for PTP clock synchronization.\n` +
+                `The 'asio' plugin requires proper ASIO driver installation on Windows.\n` +
+                `The 'jack' plugin requires JACK Audio Connection Kit to be installed.`);
         }
     }
 };
 /**
- * Verify that Jack is running
+ * Verify that ASIO device is available
+ * Note: ASIO doesn't require a running server like Jack, but we can verify the plugin
  */
-export const verifyJackRunning = async (logger) => {
+export const verifyAsioAvailable = async (logger) => {
     try {
-        await execCommandSafe("jack_lsp");
-        logger.verboseLog("Jack server is running");
+        // Check if asiosrc element can be instantiated
+        await execCommandSafe("gst-inspect-1.0 asiosrc");
+        logger.verboseLog("ASIO source plugin is available");
     }
     catch (error) {
-        throw new Error("Jack server is not running. Please start Jack with your desired configuration before running this tool.");
+        throw new Error("ASIO source plugin not found. Please ensure:\n" +
+            "1. GStreamer is installed with the ASIO plugin\n" +
+            "2. ASIO drivers are properly installed on your Windows system\n" +
+            "3. You have a compatible ASIO audio interface or ASIO4ALL installed");
+    }
+};
+/**
+ * Verify that JACK is available
+ */
+export const verifyJackAvailable = async (logger) => {
+    try {
+        // Check if jackaudiosrc element can be instantiated
+        await execCommandSafe("gst-inspect-1.0 jackaudiosrc");
+        logger.verboseLog("JACK audio source plugin is available");
+    }
+    catch (error) {
+        throw new Error("JACK audio source plugin not found. Please ensure:\n" +
+            "1. GStreamer is installed with the JACK plugin\n" +
+            "2. JACK Audio Connection Kit is properly installed\n" +
+            "3. JACK server is running before starting the sender");
     }
 };
 /**
  * GStreamer PTP Clock Synchronization Implementation
  * ===================================================
  *
- * For proper AES67 synchronization, this tool uses GStreamer's native PTP clock support
- * via the Python script (ptp-sender.py). This provides direct PTP synchronization without
- * requiring external PTP daemons.
- *
- * Why Python Instead of gst-launch-1.0?
- * -------------------------------------
- * GStreamer's PTP clock requires calling C API functions that are not accessible from
- * the gst-launch-1.0 command-line tool:
- *
- * - gst_ptp_init() - Initializes PTP subsystem
- * - gst_ptp_clock_new(domain) - Creates PTP clock for specific domain
- * - gst_pipeline_use_clock(ptp_clock) - Sets pipeline to use PTP clock
- *
- * The Python script uses PyGObject (GStreamer Python bindings) to access these APIs
- * and create pipelines with proper PTP synchronization.
+ * This tool uses GStreamer's clockselect plugin for PTP clock synchronization.
+ * The clockselect plugin (available in GStreamer 1.24+) allows direct PTP clock
+ * selection from the command line without requiring Python bindings or external
+ * PTP daemons.
  *
  * Synchronization Flow:
  * ---------------------
- * 1. Python script initializes GStreamer PTP subsystem
- * 2. Creates GstPtpClock synchronized to Raspberry Pi grandmaster
- * 3. Sets PTP clock as pipeline clock
- * 4. jackaudiosrc provides audio samples
- * 5. rtpL24pay timestamps packets using pipeline clock (= PTP time)
- * 6. RTP packets carry PTP-synchronized timestamps
- * 7. All receivers stay synchronized to the same PTP reference
+ * 1. gst-launch-1.0 with clockselect plugin initializes PTP clock
+ * 2. Pipeline uses PTP clock synchronized to Raspberry Pi grandmaster
+ * 3. asiosrc provides live audio samples from ASIO audio interface
+ * 4. rtpL24pay timestamps packets using pipeline clock (= PTP time)
+ * 5. RTP packets carry PTP-synchronized timestamps
+ * 6. All receivers stay synchronized to the same PTP reference
  *
- * This is the ONLY correct approach for Windows AES67 sender with proper PTP sync.
+ * This approach eliminates the need for Python, PyGObject, and MSYS2.
  */
 /**
- * Verify Python and PyGObject are available
+ * Start all Gstreamer streams for the sender using clockselect PTP synchronization
  */
-const verifyPythonEnvironment = async (logger) => {
-    // Check Python
-    try {
-        const result = await execCommandSafe("python --version");
-        logger.verboseLog(`Python found: ${result.stdout.trim()}`);
-    }
-    catch (error) {
-        try {
-            const result = await execCommandSafe("python3 --version");
-            logger.verboseLog(`Python found: ${result.stdout.trim()}`);
-        }
-        catch (error2) {
-            throw new Error("Python not found. Please install Python 3.7+ from https://www.python.org/downloads/");
-        }
-    }
-    // Check if PyGObject is installed
-    try {
-        await execCommandSafe("python -c \"import gi; gi.require_version('Gst', '1.0'); gi.require_version('GstNet', '1.0')\"");
-        logger.verboseLog("PyGObject with GStreamer support found");
-    }
-    catch (error) {
-        try {
-            await execCommandSafe("python3 -c \"import gi; gi.require_version('Gst', '1.0'); gi.require_version('GstNet', '1.0')\"");
-            logger.verboseLog("PyGObject with GStreamer support found");
-        }
-        catch (error2) {
-            throw new Error("PyGObject not found. Please install it with: pip install PyGObject\n" +
-                "Or install from: https://github.com/pygobject/pygobject/releases");
-        }
-    }
-};
-/**
- * Start all Gstreamer streams for the sender using Python PTP script
- */
-export const startGstreamerStreams = async (config, logger, configPath) => {
-    logger.info("Starting Gstreamer sender with PTP synchronization...");
+export const startGstreamerStreams = async (config, logger) => {
+    const audioSource = config.audioSource || "asio";
+    logger.info(`Starting Gstreamer sender with PTP synchronization (clockselect) using ${audioSource.toUpperCase()}...`);
     // Verify prerequisites
-    await verifyGstreamerInstallation(logger);
-    await verifyJackRunning(logger);
-    await verifyPythonEnvironment(logger);
-    // Calculate stream configuration (for display purposes)
+    await verifyGstreamerInstallation(logger, audioSource);
+    if (audioSource === "asio") {
+        await verifyAsioAvailable(logger);
+    }
+    else if (audioSource === "jack") {
+        await verifyJackAvailable(logger);
+    }
+    // Calculate stream configuration
     const streams = calculateStreamConfig(config);
     logger.info(`Configured ${streams.length} stream(s):`);
     for (const stream of streams) {
         logger.info(`  Stream ${stream.streamIndex + 1}: ${stream.channelCount} channels @ ${stream.multicastAddress}:${stream.port}`);
     }
-    // Determine Python command
-    let pythonCmd = "python";
-    try {
-        await execCommandSafe("python --version");
-    }
-    catch (error) {
-        try {
-            await execCommandSafe("python3 --version");
-            pythonCmd = "python3";
+    // Start a GStreamer pipeline for each stream
+    for (const stream of streams) {
+        const samplingRate = config.samplingRate;
+        const ptpDomain = config.ptpDomain || 0;
+        const debugLevel = config.gstreamerDebugLevel ?? 2; // Default to WARNING level
+        // Calculate channel mask based on channel count: (2^channels - 1) in hex
+        const channelMask = `0x${(2 ** stream.channelCount - 1).toString(16)}`;
+        // Build the pipeline using clockselect syntax from GStreamer docs
+        // Format: gst-launch-1.0 -v clockselect. \( clock-id=ptp ptp-domain=X pipeline \)
+        //
+        // Working examples:
+        // ASIO: asiosrc device-clsid="{...}" input-channels="0,1,2,3,..." ! audio/x-raw,format=F32LE,rate=48000,channels=N,layout=interleaved,channel-mask=(bitmask)0x... ! queue ! audioconvert ! audioresample
+        // JACK: jackaudiosrc connect=0 client-name="..." ! audio/x-raw,format=F32LE,rate=48000,channels=N,layout=interleaved,channel-mask=(bitmask)0x... ! queue ! audioconvert ! audioresample
+        //
+        // Debug levels: 0=none, 1=ERROR, 2=WARNING, 3=INFO, 4=DEBUG, 5+=TRACE
+        const args = [
+            "-v",
+            `--gst-debug-level=${debugLevel}`,
+            "clockselect.",
+            "(",
+            `clock-id=ptp`,
+            `ptp-domain=${ptpDomain}`,
+        ];
+        // Add audio source element based on configuration
+        if (audioSource === "asio") {
+            args.push("asiosrc");
+            // Add ASIO device selection
+            if (config.asioDeviceClsid) {
+                args.push(`device-clsid=${config.asioDeviceClsid}`);
+            }
+            // Generate input-channels list based on stream channels
+            // For stream with channels 0-7: "0,1,2,3,4,5,6,7"
+            // For stream with channels 8-15: "8,9,10,11,12,13,14,15"
+            const inputChannels = [];
+            for (let i = 0; i < stream.channelCount; i++) {
+                inputChannels.push(String(stream.startChannel - 1 + i)); // startChannel is 1-indexed, convert to 0-indexed
+            }
+            args.push(`input-channels="${inputChannels.join(",")}"`);
         }
-        catch (error2) {
-            throw new Error("Python not found");
+        else if (audioSource === "jack") {
+            args.push("jackaudiosrc");
+            args.push("connect=0");
+            // Add JACK client name
+            if (config.jackClientName) {
+                args.push(`client-name="${config.jackClientName}"`);
+            }
         }
+        // Add caps filter matching the working examples
+        // Note: When using spawn() with an args array, Node.js handles escaping automatically
+        // so we don't need to add quotes around the caps strings
+        args.push("!", `audio/x-raw,format=F32LE,rate=${samplingRate},channels=${stream.channelCount},layout=interleaved,channel-mask=(bitmask)${channelMask}`, "!", "queue", "!", "audioconvert", "!", "audioresample", "!", 
+        // Convert to S24BE for RTP L24 payload
+        `audio/x-raw,format=S24BE,rate=${samplingRate},channels=${stream.channelCount},layout=interleaved,channel-mask=(bitmask)${channelMask}`, "!", "rtpL24pay", "mtu=1500", "pt=96", "timestamp-offset=0", "!", "udpsink", `host=${stream.multicastAddress}`, `port=${stream.port}`, "auto-multicast=true", "ttl-mc=32", "sync=false", "async=false", ")");
+        // Format command for Windows terminal (can be copy-pasted directly)
+        const windowsCommand = formatCommandForWindows("gst-launch-1.0", args);
+        logger.info(`\nStream ${stream.streamIndex + 1} pipeline command (copy-paste ready for Windows terminal):`);
+        logger.info(windowsCommand);
+        logger.info("");
+        // Start the GStreamer pipeline as a long-running process
+        // eslint-disable-next-line no-await-in-loop
+        const handle = spawnLongRunning("gst-launch-1.0", args, {}, logger, `gst-stream${stream.streamIndex}`);
+        stream.handle = handle;
+        logger.info(`Started stream ${stream.streamIndex + 1}`);
     }
-    // Path to Python script (in the same directory as this tool)
-    const scriptPath = path.join(process.cwd(), "ptp-sender.py");
-    // Verify script exists
-    if (!(await fs.pathExists(scriptPath))) {
-        throw new Error(`PTP sender script not found at: ${scriptPath}\n` +
-            "Please ensure ptp-sender.py is in the current directory.");
-    }
-    logger.info("Starting Python PTP sender script...");
-    logger.verboseLog(`Script: ${scriptPath}`);
-    logger.verboseLog(`Config: ${configPath}`);
-    // Build command arguments
-    const args = [scriptPath, "-c", configPath];
-    if (logger.isVerbose()) {
-        args.push("-v");
-    }
-    // Start the Python script as a long-running process
-    const handle = spawnLongRunning(pythonCmd, args, {}, logger, "ptp-sender");
-    // Attach the handle to the first stream (for cleanup purposes)
-    streams[0].handle = handle;
-    logger.info("Python PTP sender started successfully");
-    logger.info("Note: You need to manually connect Jack ports from your audio source to the stream clients");
-    logger.info(`Jack client names: ${config.jackClientName}_stream0, ${config.jackClientName}_stream1, etc.`);
+    logger.info("\n✓ All streams started successfully with PTP clock synchronization");
+    logger.info(`Note: ${audioSource.toUpperCase()} device will be used for audio input`);
     return streams;
 };
 /**

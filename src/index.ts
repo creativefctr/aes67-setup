@@ -27,6 +27,84 @@ const validateNetworkInterface = async (interfaceName: string): Promise<boolean>
   }
 };
 
+const getWindowsNetworkInterfaces = async (): Promise<Array<{ name: string; description: string; status: string }>> => {
+  try {
+    const { stdout } = await execCommandSafe("wmic path win32_networkadapter get name,netconnectionstatus /format:csv");
+    const lines = stdout.split("\n").filter(line => line.trim() && !line.startsWith("Node"));
+    
+    const interfaces: Array<{ name: string; description: string; status: string }> = [];
+    
+    for (const line of lines) {
+      const parts = line.split(",");
+      if (parts.length >= 3) {
+        const name = parts[1]?.trim();
+        const statusCode = parts[2]?.trim();
+        
+        if (name && name !== "Name" && name.length > 0) {
+          // Filter out virtual adapters and miniports that aren't useful for AES67
+          const isVirtualAdapter = name.includes("Virtual") || 
+                                  name.includes("Miniport") || 
+                                  name.includes("TAP-") || 
+                                  name.includes("Tunnel") ||
+                                  name.includes("Debug") ||
+                                  name.includes("Hyper-V") ||
+                                  name.includes("Bluetooth") ||
+                                  name.includes("Wi-Fi Direct");
+          
+          if (!isVirtualAdapter) {
+            let status = "Unknown";
+            switch (statusCode) {
+              case "2": status = "Connected"; break;
+              case "7": status = "Disconnected"; break;
+              case "0": status = "Disconnected"; break;
+              case "": status = "Unknown"; break;
+              default: status = `Status ${statusCode}`; break;
+            }
+            
+            interfaces.push({
+              name,
+              description: name,
+              status
+            });
+          }
+        }
+      }
+    }
+    
+    return interfaces;
+  } catch (error) {
+    // Fallback to PowerShell if wmic fails
+    try {
+      const { stdout } = await execCommandSafe('powershell "Get-NetAdapter | Where-Object {$_.InterfaceDescription -notlike \'*Virtual*\' -and $_.InterfaceDescription -notlike \'*Miniport*\' -and $_.InterfaceDescription -notlike \'*TAP*\' -and $_.InterfaceDescription -notlike \'*Tunnel*\' -and $_.InterfaceDescription -notlike \'*Debug*\' -and $_.InterfaceDescription -notlike \'*Hyper-V*\' -and $_.InterfaceDescription -notlike \'*Bluetooth*\' -and $_.InterfaceDescription -notlike \'*Wi-Fi Direct*\'} | Select-Object Name,InterfaceDescription,Status | ConvertTo-Csv -NoTypeInformation"');
+      const lines = stdout.split("\n").filter(line => line.trim() && !line.startsWith("\"Name\""));
+      
+      const interfaces: Array<{ name: string; description: string; status: string }> = [];
+      
+      for (const line of lines) {
+        const parts = line.split(",");
+        if (parts.length >= 3) {
+          const name = parts[0]?.replace(/"/g, "").trim();
+          const description = parts[1]?.replace(/"/g, "").trim();
+          const status = parts[2]?.replace(/"/g, "").trim();
+          
+          if (name && name !== "Name" && name.length > 0) {
+            interfaces.push({
+              name,
+              description: description || name,
+              status: status || "Unknown"
+            });
+          }
+        }
+      }
+      
+      return interfaces;
+    } catch (psError) {
+      // If both fail, return empty array
+      return [];
+    }
+  }
+};
+
 const createProgram = (): Command => {
   const program = new Command();
 
@@ -50,7 +128,7 @@ const createProgram = (): Command => {
         config = await handleInitialSetup(configPath, logger);
       }
 
-      await runRuntimeLoop(config, logger, configPath);
+      await runRuntimeLoop(config, logger);
     });
 
   return program;
@@ -240,14 +318,30 @@ const handleReceiverSetup = async (configPath: string, logger: Logger): Promise<
 };
 
 const handleSenderSetup = async (configPath: string, logger: Logger): Promise<Aes67DeviceConfig> => {
-  logger.info("Configuring device as AES67 sender (Windows with JackAudio + Gstreamer)");
+  logger.info("Configuring device as AES67 sender (Windows with JACK/ASIO + Gstreamer)");
 
   // Get sender-specific configuration
   const senderAnswers = await inquirer.prompt<{
+    audioSource: "jack" | "asio";
     channelCount: number;
     channelsPerReceiver: number;
-    jackClientName: string;
   }>([
+    {
+      type: "list",
+      name: "audioSource",
+      message: "Select audio source type:",
+      choices: [
+        {
+          name: "ASIO (recommended for low latency on Windows)",
+          value: "asio",
+        },
+        {
+          name: "JACK Audio Connection Kit",
+          value: "jack",
+        },
+      ],
+      default: "asio",
+    },
     {
       type: "number",
       name: "channelCount",
@@ -269,14 +363,45 @@ const handleSenderSetup = async (configPath: string, logger: Logger): Promise<Ae
         return true;
       },
     },
-    {
-      type: "input",
-      name: "jackClientName",
-      message: "Jack client name (the client providing audio channels):",
-      default: "AudioSource",
-      validate: (input: string) => (input.trim().length > 0 ? true : "Jack client name cannot be empty"),
-    },
   ]);
+
+  // Get audio source-specific configuration
+  let jackClientName: string | undefined;
+  let asioDeviceClsid: string | undefined;
+
+  if (senderAnswers.audioSource === "jack") {
+    const jackAnswers = await inquirer.prompt<{
+      jackClientName: string;
+    }>([
+      {
+        type: "input",
+        name: "jackClientName",
+        message: "JACK client name (the client providing audio channels):",
+        default: "AudioSource",
+        validate: (input: string) => (input.trim().length > 0 ? true : "JACK client name cannot be empty"),
+      },
+    ]);
+    jackClientName = jackAnswers.jackClientName;
+  } else if (senderAnswers.audioSource === "asio") {
+    const asioAnswers = await inquirer.prompt<{
+      asioDeviceClsid: string;
+    }>([
+      {
+        type: "input",
+        name: "asioDeviceClsid",
+        message: "ASIO device CLSID (e.g., {838FE50A-C1AB-4B77-B9B6-0A40788B53F3} for JackRouter):",
+        default: "{838FE50A-C1AB-4B77-B9B6-0A40788B53F3}",
+        validate: (input: string) => {
+          if (input.trim().length === 0) return "ASIO device CLSID cannot be empty";
+          if (!/^\{[A-F0-9-]+\}$/i.test(input.trim())) {
+            return "CLSID must be in format {XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX}";
+          }
+          return true;
+        },
+      },
+    ]);
+    asioDeviceClsid = asioAnswers.asioDeviceClsid;
+  }
 
   const numStreams = Math.ceil(senderAnswers.channelCount / senderAnswers.channelsPerReceiver);
   logger.info(
@@ -288,6 +413,21 @@ const handleSenderSetup = async (configPath: string, logger: Logger): Promise<Ae
   for (let i = 1; i <= senderAnswers.channelCount; i++) {
     channelNames.push(`Channel ${i}`);
   }
+
+  // Get available network interfaces for Windows
+  logger.info("Detecting available network interfaces...");
+  const networkInterfaces = await getWindowsNetworkInterfaces();
+  
+  // Prepare network interface choices
+  const networkInterfaceChoices = networkInterfaces.length > 0 
+    ? networkInterfaces.map(iface => ({
+        name: `${iface.name} (${iface.status}) - ${iface.description}`,
+        value: iface.name
+      }))
+    : [
+        { name: "Ethernet (Manual entry)", value: "Ethernet" },
+        { name: "Wi-Fi (Manual entry)", value: "Wi-Fi" }
+      ];
 
   // Get common configuration
   const commonAnswers = await inquirer.prompt<{
@@ -317,11 +457,11 @@ const handleSenderSetup = async (configPath: string, logger: Logger): Promise<Ae
           : "Enter a valid multicast IPv4 address",
     },
     {
-      type: "input",
+      type: "list",
       name: "networkInterface",
-      message: "Network interface name for AES67 traffic (e.g., Ethernet, Wi-Fi):",
-      default: "Ethernet",
-      validate: (input: string) => (input.trim().length > 0 ? true : "Interface name cannot be empty"),
+      message: "Select network interface for AES67 traffic:",
+      choices: networkInterfaceChoices,
+      default: networkInterfaceChoices[0]?.value || "Ethernet",
     },
     {
       type: "number",
@@ -360,10 +500,12 @@ const handleSenderSetup = async (configPath: string, logger: Logger): Promise<Ae
 
   const config: Aes67DeviceConfig = {
     deviceMode: "sender",
+    audioSource: senderAnswers.audioSource,
     channelCount: senderAnswers.channelCount,
     channelNames,
     channelsPerReceiver: senderAnswers.channelsPerReceiver,
-    jackClientName: senderAnswers.jackClientName,
+    jackClientName,
+    asioDeviceClsid,
     samplingRate: commonAnswers.samplingRate,
     multicastAddress: commonAnswers.baseMulticastAddress,
     baseMulticastAddress: commonAnswers.baseMulticastAddress,

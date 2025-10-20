@@ -30,8 +30,7 @@
 ### For Sender Mode (Windows)
 - Windows 10 or 11
 - [JackAudio for Windows](https://jackaudio.org/) installed and configured
-- [Gstreamer 1.24+ for Windows](https://gstreamer.freedesktop.org/download/) with required plugins (PTP support added in 1.24)
-- [Python 3.7+](https://www.python.org/downloads/) with PyGObject (GStreamer Python bindings)
+- [GStreamer 1.24+ for Windows](https://gstreamer.freedesktop.org/download/) with all plugins (base, good, bad)
 - Node.js 20+ runtime and npm
 - Wired Ethernet connection (Gigabit recommended)
 
@@ -185,8 +184,7 @@ This file contains all the information the receiver needs:
 #### For Windows Sender Setup
 - Windows 10 or 11
 - [JackAudio for Windows](https://jackaudio.org/downloads/) installed and running
-- [Gstreamer 1.24+ for Windows](https://gstreamer.freedesktop.org/download/) with plugins (Windows PTP support added in 1.24)
-- [Python 3.7+](https://www.python.org/downloads/) with PyGObject installed
+- [GStreamer 1.24+ for Windows](https://gstreamer.freedesktop.org/download/) with all plugins (base, good, bad) - PTP clockselect plugin support added in 1.24
 - Node.js 20+ runtime and npm
 - Wired Ethernet connection (Gigabit recommended)
 - Audio application that can output to Jack (e.g., DAW, media player with Jack support)
@@ -251,36 +249,21 @@ Before configuring the Windows sender, you must set up at least one Raspberry Pi
    - Open a command prompt and run: `jack_lsp`
    - You should see a list of available Jack ports
 
-#### Install Gstreamer
+#### Install GStreamer
 
-1. **Download Gstreamer 1.24+** for Windows from [gstreamer.freedesktop.org](https://gstreamer.freedesktop.org/download/)
-   - **Important:** Version 1.24 or later is required for Windows PTP clock support
-2. **Install both packages**:
-   - gstreamer-1.0-msvc-x86_64.msi (runtime)
-   - gstreamer-1.0-devel-msvc-x86_64.msi (development, includes plugins)
-3. **Add Gstreamer to PATH**:
-   - Add `C:\gstreamer\1.0\msvc_x86_64\bin` to your system PATH environment variable
-4. **Verify installation**:
-   - Open a command prompt and run: `gst-launch-1.0 --version`
-   - You should see version 1.24 or later
+1. **Download and install GStreamer 1.24+** from [gstreamer.freedesktop.org](https://gstreamer.freedesktop.org/download/)
+   - Download both the runtime and development installers
+   - Install with "Complete" installation to get all plugins
+   - Ensure `gst-launch-1.0` is in your system PATH
 
-#### Install Python and Dependencies
-
-1. **Download and install Python 3.7+** from [python.org](https://www.python.org/downloads/)
-   - Make sure to check "Add Python to PATH" during installation
-2. **Verify Python installation**:
+2. **Verify GStreamer installation**:
    ```bash
-   python --version
+   gst-launch-1.0 --version
+   gst-inspect-1.0 clockselect
+   gst-inspect-1.0 jackaudiosrc
    ```
-3. **Install PyGObject** (GStreamer Python bindings):
-   ```bash
-   pip install PyGObject
-   ```
-   - On Windows, you may need to download a wheel from [pygobject releases](https://github.com/pygobject/pygobject/releases)
-4. **Verify PyGObject installation**:
-   ```bash
-   python -c "import gi; gi.require_version('Gst', '1.0'); print('PyGObject OK')"
-   ```
+   
+   All commands should complete successfully without errors.
 
 #### Configure Your Audio Application
 
@@ -305,20 +288,14 @@ Before configuring the Windows sender, you must set up at least one Raspberry Pi
    npm run build
    ```
 
-3. **Install Python dependencies**:
-   ```bash
-   pip install -r requirements.txt
-   ```
-   This installs PyGObject (GStreamer Python bindings) needed for PTP synchronization.
-
-4. **Run the configuration wizard**:
+3. **Run the configuration wizard**:
    ```bash
    node dist\index.js --verbose
    ```
    
-   The tool will automatically verify that Python and PyGObject are installed.
+   The tool will automatically verify that GStreamer is installed with required plugins.
 
-5. **Select "Sender" mode** and answer the prompts:
+4. **Select "Sender" mode** and answer the prompts:
 
    | Prompt | Example Value | Notes |
    |--------|--------------|-------|
@@ -334,79 +311,35 @@ Before configuring the Windows sender, you must set up at least one Raspberry Pi
    | Base RTP port | `5004` | Will auto-increment for each stream |
    | Session name | `AES67 Sender` | Friendly name for logging |
 
-6. **Start the sender**:
+5. **Start the sender**:
    ```bash
    node dist\index.js --verbose
    ```
 
    The tool will:
-   - Verify Python and PyGObject are installed
-   - Start Python PTP sender script with proper PTP synchronization
-   - Create Gstreamer pipelines for each stream
+   - Verify GStreamer and Jack are installed
+   - Start GStreamer pipelines using clockselect plugin for PTP synchronization
+   - Create one pipeline per stream with proper PTP clock
    - **Automatically generate SDP files** in the `sdp-files` directory
    - Display Jack client names for connection
 
    Example output:
    ```
-   [INFO] Starting Python PTP sender script...
-   ✓ PTP clock synchronized successfully
+   [INFO] Starting Gstreamer sender with PTP synchronization (clockselect)...
+   ✓ All streams started successfully with PTP clock synchronization
    Generated SDP file: C:\path\to\aes67-setup\sdp-files\stream1.sdp
    Generated SDP file: C:\path\to\aes67-setup\sdp-files\stream2.sdp
    ```
 
-7. **Connect Jack audio**:
+6. **Connect Jack audio**:
    - The tool creates Jack clients named `<YourClientName>_stream0`, `<YourClientName>_stream1`, etc.
    - Use QjackCtl's "Connect" window or `jack_connect` command to route audio from your application to these clients
    - Each stream client will have inputs corresponding to the channels for that stream
 
-8. **Transfer SDP files to receivers**:
+7. **Transfer SDP files to receivers**:
    - The generated SDP files in the `sdp-files` directory contain all configuration for each stream
    - Copy these files to your Raspberry Pi receiver(s) using SCP, USB drive, or network share
    - Example: `scp sdp-files/*.sdp pi@raspberrypi:/home/pi/`
-
-### Step 1.5: Python Dependencies for PTP Clock Synchronization
-
-This tool uses GStreamer's native PTP clock support for proper AES67 synchronization. This requires Python and PyGObject (GStreamer Python bindings).
-
-**Why Python?**
-GStreamer's PTP clock requires API calls (`gst_ptp_init()`, `gst_ptp_clock_new()`) that aren't accessible from the `gst-launch-1.0` command-line tool. The Node.js tool automatically invokes a Python script that uses GStreamer's Python bindings to properly initialize PTP synchronization.
-
-**Setup:**
-1. **Ensure you have GStreamer 1.24 or later** installed (Windows PTP support added in 1.24):
-   ```bash
-   gst-launch-1.0 --version
-   ```
-
-2. **Install Python 3.7+** from [python.org](https://www.python.org/downloads/) if not already installed
-
-3. **Install PyGObject** (GStreamer Python bindings):
-   ```bash
-   pip install PyGObject
-   ```
-   
-   Or download the appropriate wheel from [here](https://github.com/pygobject/pygobject/releases)
-
-4. **Install Python dependencies** (from the project directory):
-   ```bash
-   pip install -r requirements.txt
-   ```
-
-**How it works:**
-1. You configure and run the Node.js tool as normal
-2. The tool automatically detects Python and PyGObject
-3. Behind the scenes, it invokes `ptp-sender.py` which:
-   - Initializes GStreamer's PTP subsystem
-   - Creates a PTP clock synchronized to your Raspberry Pi grandmaster
-   - Sets up GStreamer pipelines with proper PTP timestamps
-4. All streams use PTP-synchronized RTP timestamps for perfect multi-device sync
-
-**Benefits:**
-- ✅ Direct PTP synchronization within GStreamer (no external PTP daemon needed)
-- ✅ Best possible clock precision (pipeline clock IS the PTP clock)
-- ✅ Fully automated - the Node.js tool handles everything
-- ✅ Native GStreamer 1.24+ feature
-
-The integration is seamless - you use the Node.js tool as documented, and it automatically uses Python for proper PTP support.
 
 ### Step 2: Configure the Receiver (Raspberry Pi)
 
@@ -571,6 +504,40 @@ The integration is seamless - you use the Node.js tool as documented, and it aut
    cat /etc/aes67/stream1.sdp
    ```
    Ensure the multicast address and port match the sender's configuration.
+
+#### GStreamer Plugin Issues (Windows)
+
+If you encounter GStreamer-related errors during sender setup:
+
+**Error: `Required Gstreamer plugin 'clockselect' not found`**
+
+This means you don't have the complete GStreamer installation. Solution:
+
+1. **Reinstall GStreamer** with "Complete" installation option
+2. **Or manually install missing plugins**:
+   - Download GStreamer development package
+   - Ensure gst-plugins-base, gst-plugins-good, and gst-plugins-bad are all installed
+
+3. **Verify plugins are available**:
+   ```bash
+   gst-inspect-1.0 clockselect
+   gst-inspect-1.0 ptp
+   gst-inspect-1.0 jackaudiosrc
+   ```
+
+**Error: `Jack server is not running`**
+
+The tool includes Windows-compatible Jack detection. If you still get this error:
+
+1. **Start Jack using Jack Control** (GUI application)
+2. **Or start Jack from command line**:
+   ```bash
+   jackd -R -d portaudio
+   ```
+3. **Verify Jack is running**:
+   ```bash
+   jack_lsp
+   ```
 
 #### Configuration Mismatch Issues
 
@@ -742,18 +709,19 @@ AES67 is a standard for moving high-quality audio streams across a network using
   - JackAudio provides a professional audio routing system on Windows. Your audio applications (DAW, media players, etc.) output to Jack, and this tool connects to Jack to capture the audio for streaming.
   - You configure the tool with your Jack client name and channel count. The tool creates Jack clients for each stream that you manually connect using QjackCtl or `jack_connect`.
 
-- **Python PTP sender for proper synchronization**
-  - The Node.js tool automatically invokes a Python script (`ptp-sender.py`) that handles GStreamer pipeline creation with proper PTP clock synchronization.
-  - The Python script uses PyGObject (GStreamer Python bindings) to access GStreamer's PTP clock API:
-    - Calls `gst_ptp_init()` to initialize PTP subsystem
-    - Creates `GstPtpClock` synchronized to Raspberry Pi grandmaster
-    - Sets PTP clock as pipeline clock
-    - This ensures RTP timestamps are based directly on PTP time
-  - This approach is necessary because PTP clock initialization requires C API access not available from `gst-launch-1.0`.
+- **GStreamer clockselect plugin for PTP synchronization**
+  - The tool uses GStreamer 1.24+'s `clockselect` plugin for direct PTP clock synchronization from the command line.
+  - The clockselect plugin enables gst-launch-1.0 to:
+    - Initialize PTP subsystem with specified domain
+    - Create PTP clock synchronized to Raspberry Pi grandmaster
+    - Use PTP clock as the pipeline clock automatically
+    - Ensure RTP timestamps are based directly on PTP time
+  - This approach provides native PTP support without requiring Python, PyGObject, or external PTP daemons.
 
-- **Gstreamer pipelines for AES67 streaming**
-  - The Python script creates one Gstreamer pipeline for each stream. Each pipeline:
-    - Connects to Jack using `jackaudiosrc` to capture audio
+- **GStreamer pipelines for AES67 streaming**
+  - The tool creates one gst-launch-1.0 pipeline for each stream. Each pipeline:
+    - Uses `clockselect` to establish PTP clock synchronization
+    - Connects to Jack using `jackaudiosrc` to capture live audio
     - Converts and resamples audio to the correct format
     - Packages audio as RTP with 24-bit PCM encoding (`rtpL24pay`) for AES67 compatibility
     - Uses PTP-synchronized pipeline clock for RTP timestamps

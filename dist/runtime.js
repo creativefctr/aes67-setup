@@ -75,24 +75,25 @@ const runReceiverRuntimeLoop = async (config, logger) => {
         await teardownPipewireRouting(routingState, logger);
     }
 };
-const runSenderRuntimeLoop = async (config, logger, configPath) => {
+const runSenderRuntimeLoop = async (config, logger) => {
     logger.info("Starting AES67 sender runtime process.");
     let gstreamerStreams;
     let stopRequested = false;
     const handleSignal = (signal) => {
-        logger.warn(`Received ${signal}. Initiating shutdown of AES67 sender runtime.`);
+        logger.warn(`\nReceived signal ${signal}. Initiating shutdown of AES67 sender runtime.`);
         stopRequested = true;
     };
     const signals = ["SIGINT", "SIGTERM"];
     signals.forEach((signal) => process.on(signal, handleSignal));
+    logger.verboseLog(`Registered signal handlers for: ${signals.join(", ")}`);
     try {
         // Start Gstreamer streams with PTP synchronization
-        gstreamerStreams = await startGstreamerStreams(config, logger, configPath);
+        gstreamerStreams = await startGstreamerStreams(config, logger);
         // Generate SDP files for receivers
         const sdpOutputDir = path.join(process.cwd(), "sdp-files");
         const sdpFiles = await generateSdpFiles(config, gstreamerStreams, sdpOutputDir, logger);
-        console.log(chalk.green("AES67 sender is active. Monitoring..."));
-        logger.info("Manual Jack connections required:");
+        console.log(chalk.green("\nAES67 sender is active. Monitoring..."));
+        logger.info("\nManual Jack connections required:");
         logger.info(`  Connect your audio source ports to the Jack clients named: ${config.jackClientName}_stream*`);
         logger.info("  Use jack_connect or a Jack patchbay tool like QjackCtl");
         logger.info("");
@@ -101,24 +102,37 @@ const runSenderRuntimeLoop = async (config, logger, configPath) => {
             logger.info(`  Stream ${index + 1}: ${file}`);
         });
         logger.info("Copy these SDP files to your receiver(s) for configuration.");
+        logger.info("");
+        logger.info("Press Ctrl+C to stop the sender...");
+        logger.info("");
+        logger.verboseLog(`Entering monitoring loop. stopRequested=${stopRequested}`);
+        // Keep the process running indefinitely until Ctrl+C
         // eslint-disable-next-line no-unmodified-loop-condition
         while (!stopRequested) {
             // eslint-disable-next-line no-await-in-loop
             await new Promise((resolve) => setTimeout(resolve, 60_000));
+            if (!stopRequested) {
+                logger.verboseLog("Sender monitoring loop - all streams running");
+            }
         }
+        logger.verboseLog(`Exited monitoring loop. stopRequested=${stopRequested}`);
         logger.info("Shutdown requested, cleaning up resources.");
+    }
+    catch (error) {
+        logger.error(`Error in sender runtime: ${error.message}`);
+        throw error;
     }
     finally {
         signals.forEach((signal) => process.off(signal, handleSignal));
         await stopGstreamerStreams(gstreamerStreams, logger);
     }
 };
-export const runRuntimeLoop = async (config, logger, configPath) => {
+export const runRuntimeLoop = async (config, logger) => {
     if (config.deviceMode === "receiver") {
         await runReceiverRuntimeLoop(config, logger);
     }
     else if (config.deviceMode === "sender") {
-        await runSenderRuntimeLoop(config, logger, configPath);
+        await runSenderRuntimeLoop(config, logger);
     }
     else {
         throw new Error(`Unknown device mode: ${config.deviceMode}`);

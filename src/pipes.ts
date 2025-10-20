@@ -8,6 +8,7 @@ const createProcessHandle = (
   child: ChildProcess,
   logger: Logger,
   description: string,
+  onExit?: (code: number | null) => void,
 ): ManagedProcessHandle => {
   const stop = async (): Promise<void> => {
     if (!child.killed) {
@@ -19,19 +20,39 @@ const createProcessHandle = (
   if (child.stdout) {
     child.stdout.setEncoding("utf-8");
     child.stdout.on("data", (data) => {
-      logger.verboseLog(`${description} stdout: ${data.trim()}`);
+      // Show stdout output (pipeline status messages) at info level
+      const lines = data.trim().split('\n');
+      for (const line of lines) {
+        if (line) {
+          logger.info(`[${description}] ${line}`);
+        }
+      }
     });
   }
 
   if (child.stderr) {
     child.stderr.setEncoding("utf-8");
     child.stderr.on("data", (data) => {
-      logger.warn(`${description} stderr: ${data.trim()}`);
+      // Show stderr output (warnings/errors) at warn level
+      const lines = data.trim().split('\n');
+      for (const line of lines) {
+        if (line) {
+          logger.warn(`[${description}] ${line}`);
+        }
+      }
     });
   }
 
   child.on("exit", (code, signal) => {
-    logger.verboseLog(`${description} exited with code ${code} signal ${signal ?? "none"}`);
+    if (code !== 0 && code !== null) {
+      logger.error(`${description} exited unexpectedly with code ${code} signal ${signal ?? "none"}`);
+    } else {
+      logger.verboseLog(`${description} exited with code ${code} signal ${signal ?? "none"}`);
+    }
+    
+    if (onExit) {
+      onExit(code);
+    }
   });
 
   return { stop };
@@ -43,6 +64,7 @@ export const spawnLongRunning = (
   options: { cwd?: string; env?: NodeJS.ProcessEnv } = {},
   logger: Logger,
   description: string,
+  onExit?: (code: number | null) => void,
 ): ManagedProcessHandle => {
   logger.verboseLog(`Spawning ${description}: ${command} ${args.join(" ")}`);
 
@@ -58,6 +80,6 @@ export const spawnLongRunning = (
 
   logger.verboseLog(`${description} started with pid ${child.pid}`);
 
-  return createProcessHandle(child, logger, description);
+  return createProcessHandle(child, logger, description, onExit);
 };
 
