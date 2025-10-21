@@ -19,7 +19,7 @@
   "baseMulticastAddress": "239.69.100.1",
   "networkInterface": "Intel(R) Wi-Fi 6E AX211 160MHz",
   "ptpDomain": 0,
-  "ptpMode": "slave",
+  "ptpMode": "none",
   "rtpDestinationPort": 5004,
   "sessionName": "AES67 Sender",
   "lastUpdated": "2025-10-20T19:20:04.286Z"

@@ -20,7 +20,7 @@ const configSchema = z
     sdpFilePath: z.string().min(1).optional(),
     networkInterface: z.string().min(1),
     ptpDomain: z.number().int().min(0).max(127),
-    ptpMode: z.enum(["grandmaster", "slave"]),
+    ptpMode: z.enum(["grandmaster", "slave", "none"]),
     rtpDestinationPort: z.number().int().min(1024).max(65535),
     sessionName: z.string().min(1),
     lastUpdated: z.string(),

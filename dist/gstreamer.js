@@ -3,41 +3,6 @@ import { execCommandSafe } from "./utils/exec.js";
 import fs from "fs-extra";
 import path from "path";
 /**
- * Format GStreamer command arguments for Windows terminal (PowerShell)
- * Uses single quotes for caps filters and escapes parentheses for PowerShell
- */
-const formatCommandForWindows = (command, args) => {
-    const escapeForWindows = (arg) => {
-        // Escape parentheses for PowerShell (backtick is PowerShell escape character)
-        if (arg === "(") {
-            return "`(";
-        }
-        if (arg === ")") {
-            return "`)";
-        }
-        // Don't quote simple operators and element names
-        if (arg === "!" || /^[a-z0-9]+$/.test(arg)) {
-            return arg;
-        }
-        // Caps filters (audio/x-raw) - use single quotes to preserve parentheses in bitmask
-        if (arg.startsWith("audio/")) {
-            return `'${arg}'`;
-        }
-        // Properties with values (key=value) - use double quotes if contains special chars
-        if (arg.includes("=")) {
-            // Check if value part has spaces or quotes that need escaping
-            if (arg.includes(" ") || arg.includes("&") || arg.includes("|")) {
-                return `"${arg.replace(/"/g, '\\"')}"`;
-            }
-            return arg;
-        }
-        // Default: return as-is for simple args
-        return arg;
-    };
-    const formattedArgs = args.map(escapeForWindows);
-    return `${command} ${formattedArgs.join(" ")}`;
-};
-/**
  * Calculate stream configurations based on total channels and channels per receiver
  */
 export const calculateStreamConfig = (config) => {
@@ -152,7 +117,8 @@ export const verifyJackAvailable = async (logger) => {
  * This approach eliminates the need for Python, PyGObject, and MSYS2.
  */
 /**
- * Start all Gstreamer streams for the sender using clockselect PTP synchronization
+ * Start all Gstreamer streams for the sender using PowerShell script
+ * This avoids the quoting/escaping issues when spawning gst-launch-1.0 directly from Node.js
  */
 export const startGstreamerStreams = async (config, logger) => {
     const audioSource = config.audioSource || "asio";
@@ -171,71 +137,76 @@ export const startGstreamerStreams = async (config, logger) => {
     for (const stream of streams) {
         logger.info(`  Stream ${stream.streamIndex + 1}: ${stream.channelCount} channels @ ${stream.multicastAddress}:${stream.port}`);
     }
+    // Check if PTP clock should be used
+    const usePtpClock = config.ptpMode !== "none";
+    const ptpDomain = config.ptpDomain || 0;
+    const debugLevel = config.gstreamerDebugLevel ?? 4; // Default to WARNING level
+    // Get the path to the PowerShell script
+    const scriptPath = path.join(process.cwd(), "run-gstreamer-pipeline.ps1");
+    // Verify the script exists
+    if (!await fs.pathExists(scriptPath)) {
+        throw new Error(`PowerShell script not found at: ${scriptPath}`);
+    }
+    logger.info(`Using PowerShell script: ${scriptPath}`);
     // Start a GStreamer pipeline for each stream
     for (const stream of streams) {
-        const samplingRate = config.samplingRate;
-        const ptpDomain = config.ptpDomain || 0;
-        const debugLevel = config.gstreamerDebugLevel ?? 2; // Default to WARNING level
-        // Calculate channel mask based on channel count: (2^channels - 1) in hex
-        const channelMask = `0x${(2 ** stream.channelCount - 1).toString(16)}`;
-        // Build the pipeline using clockselect syntax from GStreamer docs
-        // Format: gst-launch-1.0 -v clockselect. \( clock-id=ptp ptp-domain=X pipeline \)
-        //
-        // Working examples:
-        // ASIO: asiosrc device-clsid="{...}" input-channels="0,1,2,3,..." ! audio/x-raw,format=F32LE,rate=48000,channels=N,layout=interleaved,channel-mask=(bitmask)0x... ! queue ! audioconvert ! audioresample
-        // JACK: jackaudiosrc connect=0 client-name="..." ! audio/x-raw,format=F32LE,rate=48000,channels=N,layout=interleaved,channel-mask=(bitmask)0x... ! queue ! audioconvert ! audioresample
-        //
-        // Debug levels: 0=none, 1=ERROR, 2=WARNING, 3=INFO, 4=DEBUG, 5+=TRACE
-        const args = [
-            "-v",
-            `--gst-debug-level=${debugLevel}`,
-            "clockselect.",
-            "(",
-            `clock-id=ptp`,
-            `ptp-domain=${ptpDomain}`,
-        ];
-        // Add audio source element based on configuration
+        // Build the PowerShell command string
+        let command = `& "${scriptPath}" -AudioSource "${audioSource}" -Channels ${stream.channelCount} -SamplingRate ${config.samplingRate} -MulticastAddress "${stream.multicastAddress}" -Port ${stream.port} -DebugLevel ${debugLevel}`;
+        // Add audio source specific parameters
         if (audioSource === "asio") {
-            args.push("asiosrc");
-            // Add ASIO device selection
             if (config.asioDeviceClsid) {
-                args.push(`device-clsid=${config.asioDeviceClsid}`);
+                command += ` -DeviceClsid "${config.asioDeviceClsid}"`;
             }
             // Generate input-channels list based on stream channels
-            // For stream with channels 0-7: "0,1,2,3,4,5,6,7"
-            // For stream with channels 8-15: "8,9,10,11,12,13,14,15"
             const inputChannels = [];
             for (let i = 0; i < stream.channelCount; i++) {
                 inputChannels.push(String(stream.startChannel - 1 + i)); // startChannel is 1-indexed, convert to 0-indexed
             }
-            args.push(`input-channels="${inputChannels.join(",")}"`);
+            command += ` -InputChannels "${inputChannels.join(",")}"`;
         }
         else if (audioSource === "jack") {
-            args.push("jackaudiosrc");
-            args.push("connect=0");
-            // Add JACK client name
             if (config.jackClientName) {
-                args.push(`client-name="${config.jackClientName}"`);
+                command += ` -JackClientName "${config.jackClientName}"`;
             }
         }
-        // Add caps filter matching the working examples
-        // Note: When using spawn() with an args array, Node.js handles escaping automatically
-        // so we don't need to add quotes around the caps strings
-        args.push("!", `audio/x-raw,format=F32LE,rate=${samplingRate},channels=${stream.channelCount},layout=interleaved,channel-mask=(bitmask)${channelMask}`, "!", "queue", "!", "audioconvert", "!", "audioresample", "!", 
-        // Convert to S24BE for RTP L24 payload
-        `audio/x-raw,format=S24BE,rate=${samplingRate},channels=${stream.channelCount},layout=interleaved,channel-mask=(bitmask)${channelMask}`, "!", "rtpL24pay", "mtu=1500", "pt=96", "timestamp-offset=0", "!", "udpsink", `host=${stream.multicastAddress}`, `port=${stream.port}`, "auto-multicast=true", "ttl-mc=32", "sync=false", "async=false", ")");
-        // Format command for Windows terminal (can be copy-pasted directly)
-        const windowsCommand = formatCommandForWindows("gst-launch-1.0", args);
-        logger.info(`\nStream ${stream.streamIndex + 1} pipeline command (copy-paste ready for Windows terminal):`);
-        logger.info(windowsCommand);
-        logger.info("");
-        // Start the GStreamer pipeline as a long-running process
+        // Add PTP parameters if enabled
+        if (usePtpClock) {
+            command += " -EnablePtp";
+            command += ` -PtpDomain ${ptpDomain}`;
+        }
+        // Force PowerShell to output ANSI colors by setting OutputRendering
+        const psCommand = `$PSStyle.OutputRendering = [System.Management.Automation.OutputRendering]::Ansi; ${command}`;
+        // Build PowerShell arguments
+        // -NoLogo: Don't show PowerShell banner
+        // -NonInteractive: Don't wait for user input  
+        // -Command: Execute the command string
+        const psArgs = [
+            "-NoLogo",
+            "-NonInteractive",
+            "-ExecutionPolicy", "Bypass",
+            "-NoProfile",
+            "-Command",
+            psCommand,
+        ];
+        logger.verboseLog(`PowerShell arguments: ${psArgs.join(" ")}`);
+        // Start the PowerShell process which will launch GStreamer
+        // Enable color preservation to see GStreamer's colored output
+        // Set environment variables to ensure ANSI colors are enabled
+        const env = {
+            ...process.env,
+            FORCE_COLOR: "1",
+            TERM: "xterm-256color",
+            COLORTERM: "truecolor",
+            GST_DEBUG_COLOR_MODE: "on", // Force GStreamer to use colors
+        };
         // eslint-disable-next-line no-await-in-loop
-        const handle = spawnLongRunning("gst-launch-1.0", args, {}, logger, `gst-stream${stream.streamIndex}`);
+        const handle = spawnLongRunning("powershell", psArgs, { env }, logger, `gst-stream${stream.streamIndex}`, undefined, // onExit callback
+        true);
         stream.handle = handle;
         logger.info(`Started stream ${stream.streamIndex + 1}`);
     }
-    logger.info("\n✓ All streams started successfully with PTP clock synchronization");
+    const clockInfo = usePtpClock ? "with PTP clock synchronization" : "without PTP clock (using system clock)";
+    logger.info(`\n✓ All streams started successfully ${clockInfo}`);
     logger.info(`Note: ${audioSource.toUpperCase()} device will be used for audio input`);
     return streams;
 };

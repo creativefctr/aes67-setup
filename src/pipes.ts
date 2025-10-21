@@ -9,6 +9,7 @@ const createProcessHandle = (
   logger: Logger,
   description: string,
   onExit?: (code: number | null) => void,
+  preserveColors: boolean = false,
 ): ManagedProcessHandle => {
   const stop = async (): Promise<void> => {
     if (!child.killed) {
@@ -18,29 +19,45 @@ const createProcessHandle = (
   };
 
   if (child.stdout) {
-    child.stdout.setEncoding("utf-8");
-    child.stdout.on("data", (data) => {
-      // Show stdout output (pipeline status messages) at info level
-      const lines = data.trim().split('\n');
-      for (const line of lines) {
-        if (line) {
-          logger.info(`[${description}] ${line}`);
+    if (preserveColors) {
+      // Don't set encoding - work with raw buffers to preserve ANSI codes
+      child.stdout.on("data", (data: Buffer) => {
+        // Write raw data directly to stdout to preserve all ANSI color codes
+        process.stdout.write(data);
+      });
+    } else {
+      child.stdout.setEncoding("utf-8");
+      child.stdout.on("data", (data) => {
+        // Show stdout output (pipeline status messages) at info level
+        const lines = data.trim().split('\n');
+        for (const line of lines) {
+          if (line) {
+            logger.info(`[${description}] ${line}`);
+          }
         }
-      }
-    });
+      });
+    }
   }
 
   if (child.stderr) {
-    child.stderr.setEncoding("utf-8");
-    child.stderr.on("data", (data) => {
-      // Show stderr output (warnings/errors) at warn level
-      const lines = data.trim().split('\n');
-      for (const line of lines) {
-        if (line) {
-          logger.warn(`[${description}] ${line}`);
+    if (preserveColors) {
+      // Don't set encoding - work with raw buffers to preserve ANSI codes
+      child.stderr.on("data", (data: Buffer) => {
+        // Write raw data directly to stderr to preserve all ANSI color codes
+        process.stderr.write(data);
+      });
+    } else {
+      child.stderr.setEncoding("utf-8");
+      child.stderr.on("data", (data) => {
+        // Show stderr output (warnings/errors) at warn level
+        const lines = data.trim().split('\n');
+        for (const line of lines) {
+          if (line) {
+            logger.warn(`[${description}] ${line}`);
+          }
         }
-      }
-    });
+      });
+    }
   }
 
   child.on("exit", (code, signal) => {
@@ -65,6 +82,7 @@ export const spawnLongRunning = (
   logger: Logger,
   description: string,
   onExit?: (code: number | null) => void,
+  preserveColors: boolean = false,
 ): ManagedProcessHandle => {
   logger.verboseLog(`Spawning ${description}: ${command} ${args.join(" ")}`);
 
@@ -80,6 +98,6 @@ export const spawnLongRunning = (
 
   logger.verboseLog(`${description} started with pid ${child.pid}`);
 
-  return createProcessHandle(child, logger, description, onExit);
+  return createProcessHandle(child, logger, description, onExit, preserveColors);
 };
 
