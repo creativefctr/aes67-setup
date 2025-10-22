@@ -409,6 +409,13 @@ const handleSenderSetup = async (configPath, logger) => {
             default: networkInterfaceChoices[0]?.value || "Ethernet",
         },
         {
+            type: "list",
+            name: "multicastIface",
+            message: "Select network interface for multicast output (GStreamer multicast-iface):",
+            choices: networkInterfaceChoices,
+            default: networkInterfaceChoices[0]?.value || "Ethernet",
+        },
+        {
             type: "number",
             name: "ptpDomain",
             message: "PTP domain number:",
@@ -454,6 +461,7 @@ const handleSenderSetup = async (configPath, logger) => {
         multicastAddress: commonAnswers.baseMulticastAddress,
         baseMulticastAddress: commonAnswers.baseMulticastAddress,
         networkInterface: commonAnswers.networkInterface,
+        multicastIface: commonAnswers.multicastIface,
         ptpDomain: commonAnswers.ptpDomain,
         ptpMode: commonAnswers.ptpMode,
         rtpDestinationPort: commonAnswers.rtpDestinationPort,

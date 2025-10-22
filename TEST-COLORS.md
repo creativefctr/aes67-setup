@@ -161,3 +161,4 @@ Raw buffer passthrough is actually **faster** than:
 
 So you get better performance AND better colors! 🎨⚡
 
+

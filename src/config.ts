@@ -29,6 +29,7 @@ const configSchema = z
     jackClientName: z.string().min(1).optional(),
     channelsPerReceiver: z.number().int().positive().optional(),
     baseMulticastAddress: z.string().regex(multicastRegex, "Invalid multicast IPv4 address").optional(),
+    multicastIface: z.string().min(1).optional(),
     asioDeviceClsid: z.string().min(1).optional(),
     asioInputChannels: z.string().optional(),
     gstreamerDebugLevel: z.number().int().min(0).max(5).optional(),

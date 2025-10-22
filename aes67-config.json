@@ -13,14 +13,15 @@
     "Channel 8"
   ],
   "channelsPerReceiver": 8,
-  "jackClientName": "test-jack",
+  "jackClientName": "test-xx",
   "samplingRate": 48000,
   "multicastAddress": "239.69.100.1",
   "baseMulticastAddress": "239.69.100.1",
-  "networkInterface": "Intel(R) Wi-Fi 6E AX211 160MHz",
+  "networkInterface": "Realtek USB GbE Family Controller",
+  "multicastIface": "Realtek USB GbE Family Controller",
   "ptpDomain": 0,
-  "ptpMode": "none",
+  "ptpMode": "slave",
   "rtpDestinationPort": 5004,
   "sessionName": "AES67 Sender",
-  "lastUpdated": "2025-10-20T19:20:04.286Z"
+  "lastUpdated": "2025-10-22T06:25:23.041Z"
 }

@@ -6,6 +6,7 @@ param(
     [int]$Channels = 8,
     [int]$SamplingRate = 48000,
     [string]$MulticastAddress = "239.69.100.1",
+    [string]$MulticastIface = "",
     [int]$Port = 5004,
     [int]$DebugLevel = 4,
     [switch]$EnablePtp,
@@ -77,6 +78,9 @@ $gstArgs += "!"
 $gstArgs += "udpsink"
 $gstArgs += "host=$MulticastAddress"
 $gstArgs += "port=$Port"
+if ($MulticastIface) {
+    $gstArgs += "multicast-iface=$MulticastIface"
+}
 $gstArgs += "auto-multicast=true"
 $gstArgs += "ttl-mc=32"
 $gstArgs += "sync=false"

@@ -194,6 +194,11 @@ export const startGstreamerStreams = async (
     // Build the PowerShell command string
     let command = `& "${scriptPath}" -AudioSource "${audioSource}" -Channels ${stream.channelCount} -SamplingRate ${config.samplingRate} -MulticastAddress "${stream.multicastAddress}" -Port ${stream.port} -DebugLevel ${debugLevel}`;
     
+    // Add multicast interface if specified
+    if (config.multicastIface) {
+      command += ` -MulticastIface "${config.multicastIface}"`;
+    }
+    
     // Add audio source specific parameters
     if (audioSource === "asio") {
       if (config.asioDeviceClsid) {

@@ -7,6 +7,7 @@
     -Channels 8 `
     -SamplingRate 48000 `
     -MulticastAddress "239.69.100.1" `
+    -MulticastIface "Realtek USB GbE Family Controller" `
     -Port 5004 `
     -DebugLevel 4
 

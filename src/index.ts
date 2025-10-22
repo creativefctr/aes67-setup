@@ -434,6 +434,7 @@ const handleSenderSetup = async (configPath: string, logger: Logger): Promise<Ae
     samplingRate: number;
     baseMulticastAddress: string;
     networkInterface: string;
+    multicastIface: string;
     ptpDomain: number;
     ptpMode: "grandmaster" | "slave";
     rtpDestinationPort: number;
@@ -460,6 +461,13 @@ const handleSenderSetup = async (configPath: string, logger: Logger): Promise<Ae
       type: "list",
       name: "networkInterface",
       message: "Select network interface for AES67 traffic:",
+      choices: networkInterfaceChoices,
+      default: networkInterfaceChoices[0]?.value || "Ethernet",
+    },
+    {
+      type: "list",
+      name: "multicastIface",
+      message: "Select network interface for multicast output (GStreamer multicast-iface):",
       choices: networkInterfaceChoices,
       default: networkInterfaceChoices[0]?.value || "Ethernet",
     },
@@ -510,6 +518,7 @@ const handleSenderSetup = async (configPath: string, logger: Logger): Promise<Ae
     multicastAddress: commonAnswers.baseMulticastAddress,
     baseMulticastAddress: commonAnswers.baseMulticastAddress,
     networkInterface: commonAnswers.networkInterface,
+    multicastIface: commonAnswers.multicastIface,
     ptpDomain: commonAnswers.ptpDomain,
     ptpMode: commonAnswers.ptpMode,
     rtpDestinationPort: commonAnswers.rtpDestinationPort,

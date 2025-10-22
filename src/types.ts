@@ -18,6 +18,7 @@ export interface Aes67DeviceConfig {
   jackClientName?: string; // JACK client name to connect to
   channelsPerReceiver?: number;
   baseMulticastAddress?: string;
+  multicastIface?: string; // Network interface name or IP address for multicast output (e.g., 'eth0', '192.168.1.5')
   asioDeviceClsid?: string; // ASIO device CLSID (e.g., '{838FE50A-C1AB-4B77-B9B6-0A40788B53F3}' for JackRouter)
   asioInputChannels?: string; // Comma-separated list of ASIO channels to capture (e.g., '0,1,2,3,4,5,6,7')
   // Debug settings

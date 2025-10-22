@@ -180,3 +180,4 @@ By using raw ANSI codes, we get:
 2. Proper piping behavior
 3. Compatibility with standard I/O streams
 
+

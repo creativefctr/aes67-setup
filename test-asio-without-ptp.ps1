@@ -1,5 +1,5 @@
 # Test ASIO audio source without PTP clock synchronization
-# Example configuration - replace DeviceClsid and InputChannels with your ASIO device values
+# Example configuration - replace DeviceClsid, InputChannels, and MulticastIface with your values
 
 .\run-gstreamer-pipeline.ps1 `
     -AudioSource "asio" `
@@ -8,6 +8,7 @@
     -Channels 8 `
     -SamplingRate 48000 `
     -MulticastAddress "239.69.100.1" `
+    -MulticastIface "Realtek USB GbE Family Controller" `
     -Port 5004 `
     -DebugLevel 4
 
