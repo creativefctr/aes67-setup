@@ -61,12 +61,12 @@ install -d -m 0755 /etc/linuxptp
 # Grandmaster config
 cat >/etc/linuxptp/ptp-gm.cfg <<EOF
 [global]
-domainNumber               0
-twoStepFlag                1
+domain_number              0
+two_step_flag              1
 time_stamping              $( [[ $PHC_AVAILABLE -eq 1 ]] && echo hardware || echo software )
-delayMechanism             E2E
-announceInterval           1
-syncInterval               0
+delay_mechanism            E2E
+announce_interval          1
+sync_interval              0
 logging_level              6
 
 # Make this host win BMC (tweak if you want different priorities)
@@ -74,10 +74,10 @@ priority1                  8
 priority2                  8
 
 # Reasonable values for NTP-disciplined clock (no GNSS)
-clockClass                 248
-clockAccuracy              0xFE
-offsetScaledLogVariance    0xFFFF
-timeSource                 0xA0
+clock_class                248
+clock_accuracy             0xFE
+offset_scaled_log_variance 0xFFFF
+time_source                0xA0
 EOF
 
 # Follower config

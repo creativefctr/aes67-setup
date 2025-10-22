@@ -9,7 +9,7 @@
     -MulticastAddress "239.69.100.1" `
     -MulticastIface "Realtek USB GbE Family Controller" `
     -Port 5004 `
-    -DebugLevel 5 `
+    -DebugLevel 4 `
     -EnablePtp `
     -PtpDomain 0
 
