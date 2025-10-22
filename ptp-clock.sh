@@ -83,11 +83,17 @@ EOF
 # Follower config
 cat >/etc/linuxptp/ptp-slave.cfg <<EOF
 [global]
-domainNumber      0
-twoStepFlag       1
-time_stamping     $( [[ $PHC_AVAILABLE -eq 1 ]] && echo hardware || echo software )
-delayMechanism    E2E
-logging_level     6
+domain_number              0
+two_step_flag              1
+time_stamping              $( [[ $PHC_AVAILABLE -eq 1 ]] && echo hardware || echo software )
+delay_mechanism            E2E
+announce_interval          1
+sync_interval              0
+logging_level              6
+
+# Higher priority numbers (lose BMC against GM)
+priority1                  128
+priority2                  128
 EOF
 
 echo "[5/8] Writing an environment file with your interface..."
