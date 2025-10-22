@@ -55,52 +55,21 @@ else
   echo "No PHC exposed on $IFACE; will use SOFTWARE timestamping."
 fi
 
-echo "[4/8] Creating /etc/linuxptp configs..."
-install -d -m 0755 /etc/linuxptp
-
-# Grandmaster config
-cat >/etc/linuxptp/ptp-gm.cfg <<EOF
-[global]
-domain_number              0
-two_step_flag              1
-time_stamping              $( [[ $PHC_AVAILABLE -eq 1 ]] && echo hardware || echo software )
-delay_mechanism            E2E
-announce_interval          1
-sync_interval              0
-logging_level              6
-
-# Make this host win BMC (tweak if you want different priorities)
-priority1                  8
-priority2                  8
-
-# Reasonable values for NTP-disciplined clock (no GNSS)
-clock_class                248
-clock_accuracy             0xFE
-offset_scaled_log_variance 0xFFFF
-time_source                0xA0
-EOF
-
-# Follower config
-cat >/etc/linuxptp/ptp-slave.cfg <<EOF
-[global]
-domain_number              0
-two_step_flag              1
-time_stamping              $( [[ $PHC_AVAILABLE -eq 1 ]] && echo hardware || echo software )
-delay_mechanism            E2E
-announce_interval          1
-sync_interval              0
-logging_level              6
-
-# Higher priority numbers (lose BMC against GM)
-priority1                  128
-priority2                  128
-EOF
+echo "[4/8] Building ptp4l command-line arguments..."
+# Build timestamping argument based on PHC availability
+if [[ $PHC_AVAILABLE -eq 1 ]]; then
+  TIMESTAMP_ARG="-H"  # Hardware timestamping
+else
+  TIMESTAMP_ARG="-S"  # Software timestamping
+fi
+echo "Timestamping mode: $( [[ $PHC_AVAILABLE -eq 1 ]] && echo 'hardware (-H)' || echo 'software (-S)' )"
 
 echo "[5/8] Writing an environment file with your interface..."
 cat >/etc/default/ptp <<EOF
 # Used by the systemd units created by setup_ptp_pi.sh
 PTP_IFACE="$IFACE"
 PTP_PHC_AVAILABLE="$PHC_AVAILABLE"
+PTP_TIMESTAMP_ARG="$TIMESTAMP_ARG"
 EOF
 
 echo "[6/8] Creating systemd service units..."
@@ -119,13 +88,12 @@ cat >/etc/systemd/system/ptp4l-gm.service <<'EOF'
 Description=ptp4l Grandmaster (linuxptp)
 After=network-online.target chrony.service systemd-timesyncd.service
 Wants=network-online.target
-ConditionPathExists=/etc/linuxptp/ptp-gm.cfg
 
 [Service]
 Type=simple
 EnvironmentFile=/etc/default/ptp
-ExecStart=/usr/sbin/ptp4l -i ${PTP_IFACE} -f /etc/linuxptp/ptp-gm.cfg -m
-# When PHC is absent, ptp4l cfg has time_stamping software; nothing else to change.
+# -i: interface, -2: layer2 E2E, -H/-S: hw/sw timestamping, -m: log to console
+ExecStart=/usr/sbin/ptp4l -i ${PTP_IFACE} -2 ${PTP_TIMESTAMP_ARG} -m
 Restart=on-failure
 RestartSec=2
 # Hardening
@@ -168,12 +136,12 @@ cat >/etc/systemd/system/ptp4l-slave.service <<'EOF'
 Description=ptp4l Follower (linuxptp)
 After=network-online.target
 Wants=network-online.target
-ConditionPathExists=/etc/linuxptp/ptp-slave.cfg
 
 [Service]
 Type=simple
 EnvironmentFile=/etc/default/ptp
-ExecStart=/usr/sbin/ptp4l -i ${PTP_IFACE} -f /etc/linuxptp/ptp-slave.cfg -m
+# -i: interface, -s: slave-only, -2: layer2 E2E, -H/-S: hw/sw timestamping, -m: log to console
+ExecStart=/usr/sbin/ptp4l -i ${PTP_IFACE} -s -2 ${PTP_TIMESTAMP_ARG} -m
 Restart=on-failure
 RestartSec=2
 ProtectSystem=full
