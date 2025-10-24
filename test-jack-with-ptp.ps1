@@ -8,7 +8,7 @@
     -SamplingRate 48000 `
     -MulticastAddress "239.69.100.1" `
     -Port 5004 `
-    -DebugLevel 5 `
+    -DebugLevel 4 `
     -EnablePtp `
     -PtpDomain 0
 

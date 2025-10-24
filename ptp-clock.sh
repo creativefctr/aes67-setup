@@ -92,8 +92,8 @@ Wants=network-online.target
 [Service]
 Type=simple
 EnvironmentFile=/etc/default/ptp
-# -i: interface, -4: UDP/IPv4, -H/-S: hw/sw timestamping, -m: log to console
-ExecStart=/usr/sbin/ptp4l -i ${PTP_IFACE} -4 ${PTP_TIMESTAMP_ARG} -m
+# -i: interface, -4: UDP/IPv4, -E: E2E delay mechanism, -H/-S: hw/sw timestamping, -m: log to console
+ExecStart=/usr/sbin/ptp4l -i ${PTP_IFACE} -4 -E ${PTP_TIMESTAMP_ARG} -m
 Restart=on-failure
 RestartSec=2
 # Hardening
@@ -140,8 +140,8 @@ Wants=network-online.target
 [Service]
 Type=simple
 EnvironmentFile=/etc/default/ptp
-# -i: interface, -s: slave-only, -4: UDP/IPv4, -H/-S: hw/sw timestamping, -m: log to console
-ExecStart=/usr/sbin/ptp4l -i ${PTP_IFACE} -s -4 ${PTP_TIMESTAMP_ARG} -m
+# -i: interface, -s: slave-only, -4: UDP/IPv4, -E: E2E delay mechanism, -H/-S: hw/sw timestamping, -m: log to console
+ExecStart=/usr/sbin/ptp4l -i ${PTP_IFACE} -s -4 -E ${PTP_TIMESTAMP_ARG} -m
 Restart=on-failure
 RestartSec=2
 ProtectSystem=full

@@ -7,6 +7,7 @@ param(
     [int]$SamplingRate = 48000,
     [string]$MulticastAddress = "239.69.100.1",
     [string]$MulticastIface = "",
+    [string]$UnicastAddress = "",
     [int]$Port = 5004,
     [int]$DebugLevel = 4,
     [switch]$EnablePtp,
@@ -76,15 +77,24 @@ $gstArgs += "pt=96"
 $gstArgs += "timestamp-offset=0"
 $gstArgs += "!"
 $gstArgs += "udpsink"
-$gstArgs += "host=$MulticastAddress"
-$gstArgs += "port=$Port"
-if ($MulticastIface) {
-    $gstArgs += "multicast-iface=$MulticastIface"
+
+# Use unicast if specified, otherwise use multicast
+if ($UnicastAddress) {
+    $gstArgs += "host=$UnicastAddress"
+    $gstArgs += "port=$Port"
+    $gstArgs += "sync=false"
+    $gstArgs += "async=false"
+} else {
+    $gstArgs += "host=$MulticastAddress"
+    $gstArgs += "port=$Port"
+    if ($MulticastIface) {
+        $gstArgs += "multicast-iface=$MulticastIface"
+    }
+    $gstArgs += "auto-multicast=true"
+    $gstArgs += "ttl-mc=32"
+    $gstArgs += "sync=false"
+    $gstArgs += "async=false"
 }
-$gstArgs += "auto-multicast=true"
-$gstArgs += "ttl-mc=32"
-$gstArgs += "sync=false"
-$gstArgs += "async=false"
 
 # Close PTP clock wrapper if enabled
 if ($EnablePtp) {
